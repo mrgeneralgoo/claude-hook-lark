@@ -1053,14 +1053,28 @@ def session_context(payload: dict | None = None, stats: dict | None = None) -> t
     return session_id, session_name
 
 
-def session_fields(session_id: str, session_name: str) -> list[dict]:
-    """会话名走半宽字段，完整 session id 走整行，方便直接复制。"""
-    out = []
-    if session_name:
-        out.append(field("会话", truncate(session_name, 60)))
-    if session_id:
-        out.append(field("会话 ID", "`%s`" % session_id, short=False))
-    return out
+MAX_SUBJECT_CHARS = 40
+
+
+def card_subject(session_name: str, project: str) -> str:
+    """卡片标题里跟在事件名后面的主语。
+
+    优先用**会话名**而不是项目名：一个项目下会并行跑很多个任务，
+    标题全是项目名的话，一眼看不出通知的是哪件事。会话名按任务归属，
+    天然更有区分度。会话刚开始、标题还没生成时退回项目名。
+    """
+    name = (session_name or "").strip()
+    return truncate(name, MAX_SUBJECT_CHARS) if name else project
+
+
+def session_fields(session_id: str) -> list[dict]:
+    """完整 session id 单独占一行，方便复制去翻 transcript。
+
+    会话名不再单列字段 —— 它已经在标题里了，重复一遍纯属浪费卡片空间。
+    """
+    if not session_id:
+        return []
+    return [field("会话 ID", "`%s`" % session_id, short=False)]
 
 
 # Claude Code 会把 slash command、本地命令输出、记忆输入等也写成 type=user 的记录，
@@ -1208,29 +1222,27 @@ def build_hook_payload(payload: dict, cfg: dict, stats: dict | None = None,
     lines = [headline]
 
     if event_name == "Notification" and payload.get("message"):
-        lines.append("\n📩 %s" % truncate(payload["message"], 300))
+        lines.append("📩 %s" % truncate(payload["message"], 300))
 
     if event_name == "SessionEnd" and payload.get("reason"):
-        lines.append("\n🚪 结束原因：`%s`" % payload["reason"])
+        lines.append("🚪 结束原因：`%s`" % payload["reason"])
 
     # 无论是否输出摘要都要读一次 transcript —— 会话名只存在于其中
     if stats is None:
         stats = parse_for_event(payload)
     session_id, session_name = session_context(payload, stats)
-    if session_name:
-        lines.append("\n🏷️ **会话**：%s" % truncate(session_name, 80))
 
     if (summary_enabled(cfg) and stats.get("summary_reliable", True)
             and event_name in ("Stop", "SubagentStop")):
         if stats.get("user_prompt"):
-            lines.append("\n**📋 本轮任务**\n%s" % truncate(stats["user_prompt"], 300))
+            lines.append("**📋 本轮任务**\n%s" % truncate(stats["user_prompt"], 300))
         elif stats.get("turn_kind") == "tagged":
             # 有边界但没有可展示文本：给个中性说明，好过让这一行凭空消失
-            lines.append("\n**📋 本轮任务**\n_（由命令或系统事件触发，内容不展示）_")
+            lines.append("**📋 本轮任务**\n_（由命令或系统事件触发，内容不展示）_")
         elif stats.get("turn_kind") == "prompt":
-            lines.append("\n**📋 本轮任务**\n_（本轮输入为图片或附件）_")
+            lines.append("**📋 本轮任务**\n_（本轮输入为图片或附件）_")
         if stats.get("assistant_text"):
-            lines.append("\n**📝 完成情况**\n%s" % truncate(stats["assistant_text"], MAX_SUMMARY_CHARS))
+            lines.append("**📝 完成情况**\n%s" % truncate(stats["assistant_text"], MAX_SUMMARY_CHARS))
 
     meta = []
     if stats.get("tool_calls"):
@@ -1241,19 +1253,20 @@ def build_hook_payload(payload: dict, cfg: dict, stats: dict | None = None,
     if git.get("uncommitted"):
         meta.append("📝 %d 个待提交" % git["uncommitted"])
     if meta:
-        lines.append("\n" + " · ".join(meta))
+        lines.append(" · ".join(meta))
 
     fields = [
         field("项目", name),
         field("分支", git.get("branch") or stats.get("git_branch") or "-"),
         field("主机", hostname()),
     ]
-    fields.extend(session_fields(session_id, session_name))
+    fields.extend(session_fields(session_id))
 
     footer = "Claude Code · %s · %s" % (
         event_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
-    return build_card("%s · %s" % (prefix, name), color, "\n".join(lines), fields, footer)
+    return build_card("%s · %s" % (prefix, card_subject(session_name, name)),
+                      color, "\n".join(lines), fields, footer)
 
 
 def duration_lower_bound(stats: dict) -> float | None:
@@ -1428,24 +1441,22 @@ def cmd_send(args) -> int:
     name = project_name(cwd, git)
 
     title = args.title or "Claude Code 通知"
-    lines = ["**%s %s**" % (icon, title), "\n状态：%s%s" % (icon, status_cn)]
+    lines = ["**%s %s**" % (icon, title), "状态：%s%s" % (icon, status_cn)]
     if args.message:
-        lines.append("\n%s" % truncate(args.message, 1500))
+        lines.append(truncate(args.message, 1500))
     if args.detail:
-        lines.append("\n---\n%s" % truncate(args.detail, 1500))
+        lines.append("---\n%s" % truncate(args.detail, 1500))
 
     session_id = args.session_id or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     session_name = args.session_name
     if not session_name and not args.no_session:
         _, session_name = session_context({"session_id": session_id})
-    if session_name:
-        lines.append("\n🏷️ **会话**：%s" % truncate(session_name, 80))
-
     fields = [field("项目", name), field("分支", git.get("branch") or "-"), field("主机", hostname())]
     if not args.no_session:
-        fields.extend(session_fields(session_id, session_name))
+        fields.extend(session_fields(session_id))
     footer = "Claude Code · %s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    card = build_card("%s %s · %s" % (icon, title, name), color, "\n".join(lines), fields, footer)
+    subject = name if args.no_session else card_subject(session_name, name)
+    card = build_card("%s %s · %s" % (icon, title, subject), color, "\n".join(lines), fields, footer)
 
     if args.dry_run:
         print(json.dumps(card, ensure_ascii=False, indent=2))
