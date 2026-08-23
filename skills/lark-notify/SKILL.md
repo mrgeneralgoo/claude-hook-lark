@@ -33,7 +33,7 @@ python3 "$NOTIFY" send -t "标题" -s <状态> -m "正文" [-d "补充详情"] [
 | `-c, --color` | 强制指定卡片颜色，覆盖状态默认值 |
 | `--session-name` | 覆盖会话名，默认自动从 transcript 的 `ai-title` 记录读取 |
 | `--session-id` | 覆盖会话 ID，默认取环境变量 `CLAUDE_CODE_SESSION_ID` |
-| `--no-session` | 不在卡片里附带会话名和会话 ID |
+| `--no-session` | 标题退回项目名，且不附带会话 ID |
 | `--dry-run` | 只打印卡片 JSON，不真正发送 |
 
 状态与默认样式：
@@ -48,9 +48,10 @@ python3 "$NOTIFY" send -t "标题" -s <状态> -m "正文" [-d "补充详情"] [
 | `error` | ⚠️ 异常 | carmine |
 | `info` | 💬 信息 | wathet |
 
-卡片会自动附带当前项目名、Git 分支、主机名，以及**当前会话名和完整 session ID**，
-这些都不需要手动填 —— 会话名来自 transcript 的 `ai-title` 记录，会话 ID 来自 `CLAUDE_CODE_SESSION_ID`。
-只有在用户明确要求换个称呼、或要求不要暴露会话信息时，才用 `--session-name` / `--no-session` 覆盖。
+卡片**标题**会用当前会话名（来自 transcript 的 `ai-title` 记录），会话还没生成标题时退回项目名；
+正文下方自动附带项目名、Git 分支、主机名和完整 session ID（来自 `CLAUDE_CODE_SESSION_ID`）。
+这些都不需要手动填。只有在用户明确要求换个称呼、或要求不要暴露会话信息时，
+才用 `--session-name` / `--no-session` 覆盖。
 
 ## 示例
 

@@ -1,7 +1,7 @@
 {
   "name": "claude-hook-lark",
   "description": "把 Claude Code 的任务完成 / 需要授权等事件推送到飞书(Lark)，并提供可手动调用的通知 skill。纯 Python 标准库，无第三方依赖。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "mrgeneralgoo"
   },

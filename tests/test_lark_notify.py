@@ -233,8 +233,23 @@ class TestBuildCard(unittest.TestCase):
         self.assertEqual(card["msg_type"], "interactive")
         self.assertEqual(card["card"]["header"]["template"], "blue")
         self.assertEqual(card["card"]["header"]["title"]["content"], "标题")
-        tags = [e["tag"] for e in card["card"]["elements"]]
-        self.assertEqual(tags, ["div", "hr", "div", "note"])
+        tags = [e["tag"] for e in card["card"]["body"]["elements"]]
+        self.assertEqual(tags, ["markdown", "hr", "div", "markdown"])
+
+    def test_uses_card_schema_2_0(self):
+        """v1 的 div+lark_md 渲染不了标题/列表/代码块，必须用 2.0 的 markdown 元素。"""
+        card = ln.build_card("t", "green", "## 标题\n- 列表", [ln.field("k", "v")], "f")["card"]
+        self.assertEqual(card["schema"], "2.0")
+        self.assertIn("body", card, "2.0 的元素挂在 body.elements 下")
+        self.assertNotIn("elements", card, "顶层不该再有 elements")
+        self.assertEqual(card["body"]["elements"][0]["tag"], "markdown")
+
+    def test_never_emits_note_element(self):
+        """note 在 card 2.0 里会被飞书拒绝（code 11246），实测过所有写法。"""
+        card = ln.build_card("t", "green", "b", [ln.field("k", "v")], "footer")["card"]
+        tags = [e["tag"] for e in card["body"]["elements"]]
+        self.assertNotIn("note", tags)
+        self.assertIn("footer", json.dumps(card, ensure_ascii=False), "脚注内容仍要在")
 
     def test_valid_color_kept(self):
         card = ln.build_card("t", "green", "b", [], "f")
@@ -318,16 +333,22 @@ class TestSessionName(unittest.TestCase):
         self.assertEqual(ln.parse_transcript(path)["session_name"], "")
 
     def test_session_fields_shape(self):
-        fields = ln.session_fields("3f2a9c10-1111-2222-3333-444455556666", "我的会话")
-        self.assertEqual(len(fields), 2)
-        self.assertTrue(fields[0]["is_short"], "会话名用半宽")
-        self.assertFalse(fields[1]["is_short"], "完整 session id 应占整行，便于复制")
-        self.assertIn("3f2a9c10-1111-2222-3333-444455556666", fields[1]["text"]["content"])
+        fields = ln.session_fields("3f2a9c10-1111-2222-3333-444455556666")
+        self.assertEqual(len(fields), 1, "只保留会话 ID —— 会话名已经在标题里")
+        self.assertTrue(fields[0]["is_short"], "与项目/分支/主机同排，不单独占一行")
+        self.assertIn("3f2a9c10-1111-2222-3333-444455556666", fields[0]["text"]["content"])
 
-    def test_session_fields_omit_missing_parts(self):
-        self.assertEqual(ln.session_fields("", ""), [])
-        self.assertEqual(len(ln.session_fields("abc", "")), 1)
-        self.assertEqual(len(ln.session_fields("", "名字")), 1)
+    def test_all_meta_fields_are_short(self):
+        """底部元信息排成两列，不让任何一项独占整行。"""
+        card = ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(),
+             "session_id": "abc-123", "transcript_path": "/nope"}, {})
+        fields = card["card"]["body"]["elements"][2]["fields"]
+        self.assertTrue(all(f["is_short"] for f in fields),
+                        [f["text"]["content"] for f in fields])
+
+    def test_session_fields_omit_missing_id(self):
+        self.assertEqual(ln.session_fields(""), [])
 
     def test_session_id_falls_back_to_env(self):
         old = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -2322,6 +2343,194 @@ class TestCliOverrideIsHighestPriority(ConfigSandbox):
             rc = ln.cmd_send(args)
         self.assertEqual(rc, 0, "配置里的非法地址不该挡住合法的 --webhook")
         self.assertIn("interactive", buf.getvalue())
+
+
+# ── 卡片排版回归用例 ────────────────────────────────────────────────
+
+class TestCardHasNoBlankLines(unittest.TestCase):
+    """元素自带前导 \n 又被 "\n".join 加一次，会在每两个元素间插出一个空行。
+
+    注意这些断言只针对**卡片自身的排版骨架**，所以用例里的内容都是单行的。
+    用户提问和 Claude 回复本身可能含空行（markdown 段落），那是内容不是排版，
+    必须原样保留 —— 见 test_multiline_content_is_preserved。
+    """
+
+    def _write(self, records):
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def _body(self, card):
+        return card["card"]["body"]["elements"][0]["content"]
+
+    def test_hook_card_body_has_no_double_newline(self):
+        path = self._write([
+            {"type": "user", "userType": "external",
+             "timestamp": "2026-01-01T00:00:00.000Z",
+             "message": {"content": "把登录接口改成 JWT"}},
+            {"type": "assistant", "timestamp": "2026-01-01T00:00:20.000Z",
+             "message": {"content": [{"type": "tool_use", "name": "Bash"}]}},
+            {"type": "assistant", "timestamp": "2026-01-01T00:05:00.000Z",
+             "message": {"content": [{"type": "text", "text": "已完成，12 个测试通过。"}]}},
+        ])
+        body = self._body(ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(), "transcript_path": path}, {}))
+        self.assertNotIn("\n\n", body, "元素之间不该出现空行:\n%s" % body)
+        # 内容仍然齐全
+        for expect in ("把登录接口改成 JWT", "已完成，12 个测试通过。", "本轮任务", "完成情况"):
+            self.assertIn(expect, body)
+
+    def test_multiline_content_is_preserved(self):
+        """不能为了压缩密度去动用户/助手自己的换行。"""
+        answer = "第一段\n\n## 小标题\n\n第二段"
+        path = self._write([
+            {"type": "user", "userType": "external",
+             "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": "任务"}},
+            {"type": "assistant", "timestamp": "2026-01-01T00:00:20.000Z",
+             "message": {"content": [{"type": "text", "text": answer}]}},
+        ])
+        body = self._body(ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(), "transcript_path": path}, {}))
+        self.assertIn(answer, body, "助手回复里的段落结构应原样保留")
+
+    def test_scaffolding_joins_with_single_newline(self):
+        """直接锁住骨架：标题行与各分节之间恰好一个换行。"""
+        path = self._write([
+            {"type": "user", "userType": "external",
+             "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": "单行任务"}},
+            {"type": "assistant", "timestamp": "2026-01-01T00:00:20.000Z",
+             "message": {"content": [{"type": "text", "text": "单行回答"}]}},
+        ])
+        body = self._body(ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(), "transcript_path": path}, {}))
+        self.assertIn("**Claude Code 已完成本轮任务**\n**📋 本轮任务**\n单行任务\n"
+                      "**📝 完成情况**\n单行回答\n", body, body)
+
+    def test_notification_card_body_has_no_double_newline(self):
+        card = ln.build_hook_payload(
+            {"hook_event_name": "Notification", "cwd": os.getcwd(),
+             "message": "Claude needs your permission to use Bash"}, {})
+        self.assertNotIn("\n\n", self._body(card))
+
+    def test_session_end_card_body_has_no_double_newline(self):
+        card = ln.build_hook_payload(
+            {"hook_event_name": "SessionEnd", "cwd": os.getcwd(), "reason": "exit"},
+            {"events": ["SessionEnd"]})
+        self.assertNotIn("\n\n", self._body(card))
+
+    def test_send_card_body_has_no_double_newline(self):
+        args = ln.build_parser().parse_args(
+            ["send", "-t", "构建失败", "-s", "failed", "-m", "分支 feat/x 编译不通过",
+             "-d", "error[E0308]", "--no-session", "--dry-run"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ln.cmd_send(args)
+        body = self._body(json.loads(buf.getvalue()))
+        self.assertNotIn("\n\n", body, body)
+        for expect in ("构建失败", "分支 feat/x 编译不通过", "error[E0308]"):
+            self.assertIn(expect, body)
+
+
+class TestCardTitleUsesSessionName(unittest.TestCase):
+    """一个项目下会并行跑很多任务，标题全是项目名就分不清是哪件事。"""
+
+    def _write(self, records):
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def _title(self, card):
+        return card["card"]["header"]["title"]["content"]
+
+    def test_subject_prefers_session_name(self):
+        self.assertEqual(ln.card_subject("重构登录模块", "my-project"), "重构登录模块")
+
+    def test_subject_falls_back_to_project(self):
+        for empty in ("", "   ", None):
+            self.assertEqual(ln.card_subject(empty, "my-project"), "my-project")
+
+    def test_subject_is_truncated(self):
+        long_name = "很长的会话名" * 20
+        subject = ln.card_subject(long_name, "p")
+        self.assertLessEqual(len(subject), ln.MAX_SUBJECT_CHARS)
+
+    def test_hook_title_uses_session_name(self):
+        path = self._write([
+            {"type": "ai-title", "aiTitle": "重构登录模块", "sessionId": "s1"},
+            {"type": "user", "userType": "external",
+             "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": "任务"}},
+        ])
+        title = self._title(ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(),
+             "session_id": "s1", "transcript_path": path}, {}))
+        self.assertIn("重构登录模块", title)
+        self.assertIn("任务完成", title)
+
+    def test_hook_title_falls_back_to_project_without_session_name(self):
+        path = self._write([
+            {"type": "user", "userType": "external",
+             "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": "任务"}},
+        ])
+        title = self._title(ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(), "transcript_path": path}, {}))
+        self.assertIn(os.path.basename(os.getcwd()) or "claude-hook-lark", title)
+
+    def test_session_name_not_duplicated_in_body_or_fields(self):
+        path = self._write([
+            {"type": "ai-title", "aiTitle": "重构登录模块", "sessionId": "s1"},
+            {"type": "user", "userType": "external",
+             "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": "任务"}},
+        ])
+        card = ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(),
+             "session_id": "s1", "transcript_path": path}, {})
+        body = card["card"]["body"]["elements"][0]["content"]
+        self.assertNotIn("重构登录模块", body, "标题已有会话名，正文不该再重复")
+        fields_blob = json.dumps(card["card"]["body"]["elements"][2]["fields"], ensure_ascii=False)
+        self.assertNotIn("重构登录模块", fields_blob, "字段区同理")
+        self.assertIn("s1", fields_blob, "但完整 session ID 仍要保留")
+
+    def test_no_session_flag_keeps_project_name(self):
+        args = ln.build_parser().parse_args(
+            ["send", "-t", "x", "-m", "y", "--no-session", "--dry-run"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ln.cmd_send(args)
+        card = json.loads(buf.getvalue())
+        self.assertNotIn("会话 ID", json.dumps(card, ensure_ascii=False))
+
+
+class TestVersionMetadata(unittest.TestCase):
+    """版本号写在两个文件里，改一个忘一个是很容易犯的错。"""
+
+    def _repo(self):
+        return Path(__file__).resolve().parent.parent
+
+    def _load(self, rel):
+        return json.loads((self._repo() / rel).read_text(encoding="utf-8"))
+
+    def test_plugin_and_marketplace_versions_match(self):
+        plugin = self._load(".claude-plugin/plugin.json")["version"]
+        market = self._load(".claude-plugin/marketplace.json")["metadata"]["version"]
+        self.assertEqual(plugin, market,
+                         "plugin.json 与 marketplace.json 的版本号必须一致，"
+                         "否则 marketplace 判断更新时会看到矛盾的信息")
+
+    def test_version_is_semver(self):
+        version = self._load(".claude-plugin/plugin.json")["version"]
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$", "版本号应为 x.y.z")
+
+    def test_changelog_documents_current_version(self):
+        version = self._load(".claude-plugin/plugin.json")["version"]
+        changelog = (self._repo() / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("[%s]" % version, changelog,
+                      "发布新版本时 CHANGELOG 要同步记一笔")
 
 
 if __name__ == "__main__":
