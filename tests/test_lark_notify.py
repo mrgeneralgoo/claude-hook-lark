@@ -233,8 +233,23 @@ class TestBuildCard(unittest.TestCase):
         self.assertEqual(card["msg_type"], "interactive")
         self.assertEqual(card["card"]["header"]["template"], "blue")
         self.assertEqual(card["card"]["header"]["title"]["content"], "标题")
-        tags = [e["tag"] for e in card["card"]["elements"]]
-        self.assertEqual(tags, ["div", "hr", "div", "note"])
+        tags = [e["tag"] for e in card["card"]["body"]["elements"]]
+        self.assertEqual(tags, ["markdown", "hr", "div", "markdown"])
+
+    def test_uses_card_schema_2_0(self):
+        """v1 的 div+lark_md 渲染不了标题/列表/代码块，必须用 2.0 的 markdown 元素。"""
+        card = ln.build_card("t", "green", "## 标题\n- 列表", [ln.field("k", "v")], "f")["card"]
+        self.assertEqual(card["schema"], "2.0")
+        self.assertIn("body", card, "2.0 的元素挂在 body.elements 下")
+        self.assertNotIn("elements", card, "顶层不该再有 elements")
+        self.assertEqual(card["body"]["elements"][0]["tag"], "markdown")
+
+    def test_never_emits_note_element(self):
+        """note 在 card 2.0 里会被飞书拒绝（code 11246），实测过所有写法。"""
+        card = ln.build_card("t", "green", "b", [ln.field("k", "v")], "footer")["card"]
+        tags = [e["tag"] for e in card["body"]["elements"]]
+        self.assertNotIn("note", tags)
+        self.assertIn("footer", json.dumps(card, ensure_ascii=False), "脚注内容仍要在")
 
     def test_valid_color_kept(self):
         card = ln.build_card("t", "green", "b", [], "f")
@@ -320,8 +335,17 @@ class TestSessionName(unittest.TestCase):
     def test_session_fields_shape(self):
         fields = ln.session_fields("3f2a9c10-1111-2222-3333-444455556666")
         self.assertEqual(len(fields), 1, "只保留会话 ID —— 会话名已经在标题里")
-        self.assertFalse(fields[0]["is_short"], "完整 session id 应占整行，便于复制")
+        self.assertTrue(fields[0]["is_short"], "与项目/分支/主机同排，不单独占一行")
         self.assertIn("3f2a9c10-1111-2222-3333-444455556666", fields[0]["text"]["content"])
+
+    def test_all_meta_fields_are_short(self):
+        """底部元信息排成两列，不让任何一项独占整行。"""
+        card = ln.build_hook_payload(
+            {"hook_event_name": "Stop", "cwd": os.getcwd(),
+             "session_id": "abc-123", "transcript_path": "/nope"}, {})
+        fields = card["card"]["body"]["elements"][2]["fields"]
+        self.assertTrue(all(f["is_short"] for f in fields),
+                        [f["text"]["content"] for f in fields])
 
     def test_session_fields_omit_missing_id(self):
         self.assertEqual(ln.session_fields(""), [])
@@ -2340,7 +2364,7 @@ class TestCardHasNoBlankLines(unittest.TestCase):
         return path
 
     def _body(self, card):
-        return card["card"]["elements"][0]["text"]["content"]
+        return card["card"]["body"]["elements"][0]["content"]
 
     def test_hook_card_body_has_no_double_newline(self):
         path = self._write([
@@ -2466,9 +2490,9 @@ class TestCardTitleUsesSessionName(unittest.TestCase):
         card = ln.build_hook_payload(
             {"hook_event_name": "Stop", "cwd": os.getcwd(),
              "session_id": "s1", "transcript_path": path}, {})
-        body = card["card"]["elements"][0]["text"]["content"]
+        body = card["card"]["body"]["elements"][0]["content"]
         self.assertNotIn("重构登录模块", body, "标题已有会话名，正文不该再重复")
-        fields_blob = json.dumps(card["card"]["elements"][2]["fields"], ensure_ascii=False)
+        fields_blob = json.dumps(card["card"]["body"]["elements"][2]["fields"], ensure_ascii=False)
         self.assertNotIn("重构登录模块", fields_blob, "字段区同理")
         self.assertIn("s1", fields_blob, "但完整 session ID 仍要保留")
 

@@ -730,20 +730,35 @@ def field(label: str, value: str, short: bool = True) -> dict:
 
 
 def build_card(title: str, color: str, body: str, fields: list[dict], footer: str) -> dict:
-    elements: list[dict] = [{"tag": "div", "text": {"tag": "lark_md", "content": body or "-"}}]
+    """构建飞书卡片（schema 2.0）。
+
+    为什么用 2.0 而不是 v1：v1 的正文是 `div` + `lark_md`，而 lark_md 只支持
+    粗体、行内代码、链接这一小撮语法 —— Claude 回复里常见的标题（##）、列表、
+    代码块、引用统统会以原文形式露出来。2.0 的 `markdown` 元素支持完整得多。
+
+    2.0 的几个坑（都是对着真实 API 试出来的）：
+      - `note` 元素**不被接受**（code 11246），无论 elements 里放 plain_text、
+        markdown 还是 text，也无论换成 `text` 字段。脚注只能用 markdown 元素代替。
+      - `hr`、`div`（含 fields 写法）、`column_set` 在 2.0 里仍然可用。
+      - 元素挂在 `body.elements` 下，不再是顶层 `elements`。
+    """
+    elements: list[dict] = [{"tag": "markdown", "content": body or "-"}]
     if fields:
         elements.append({"tag": "hr"})
+        # fields 是 div 独有的能力，2.0 里依然有效；它只需要粗体，lark_md 够用
         elements.append({"tag": "div", "fields": fields})
-    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]})
+    elements.append({"tag": "markdown",
+                     "content": "<font color='grey'>%s</font>" % footer})
     return {
         "msg_type": "interactive",
         "card": {
+            "schema": "2.0",
             "config": {"wide_screen_mode": True},
             "header": {
                 "title": {"tag": "plain_text", "content": title},
                 "template": color if color in VALID_COLORS else "blue",
             },
-            "elements": elements,
+            "body": {"elements": elements},
         },
     }
 
@@ -1068,13 +1083,13 @@ def card_subject(session_name: str, project: str) -> str:
 
 
 def session_fields(session_id: str) -> list[dict]:
-    """完整 session id 单独占一行，方便复制去翻 transcript。
+    """会话 ID 与项目/分支/主机同排展示，不单独占一行。
 
     会话名不再单列字段 —— 它已经在标题里了，重复一遍纯属浪费卡片空间。
     """
     if not session_id:
         return []
-    return [field("会话 ID", "`%s`" % session_id, short=False)]
+    return [field("会话 ID", "`%s`" % session_id)]
 
 
 # Claude Code 会把 slash command、本地命令输出、记忆输入等也写成 type=user 的记录，
