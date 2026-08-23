@@ -1,0 +1,19 @@
+{
+  "name": "claude-hook-lark",
+  "owner": {
+    "name": "mrgeneralgoo",
+    "url": "https://github.com/mrgeneralgoo"
+  },
+  "metadata": {
+    "description": "Claude Code → 飞书 / Lark 通知插件",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-hook-lark",
+      "source": "./",
+      "category": "productivity",
+      "description": "任务完成时自动推送飞书卡片，并提供手动发送通知的 skill。"
+    }
+  ]
+}

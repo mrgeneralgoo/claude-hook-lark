@@ -1,0 +1,8 @@
+# 真实配置绝不入库
+config.json
+.claude/lark.json
+lark.json
+
+__pycache__/
+*.py[cod]
+.DS_Store

@@ -1,0 +1,16 @@
+{
+  "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "secret": "",
+
+  "webhooks": {
+    "后端群": {"webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/aaaa", "secret": ""},
+    "值班群": {"webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/bbbb", "secret": ""}
+  },
+
+  "events": ["Stop", "Notification"],
+  "include_summary": true,
+  "min_duration_seconds": 0,
+  "quiet_hours": null,
+  "timeout": 5,
+  "debug": false
+}

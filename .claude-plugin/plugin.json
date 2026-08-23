@@ -1,0 +1,72 @@
+{
+  "name": "claude-hook-lark",
+  "description": "把 Claude Code 的任务完成 / 需要授权等事件推送到飞书(Lark)，并提供可手动调用的通知 skill。纯 Python 标准库，无第三方依赖。",
+  "version": "0.1.0",
+  "author": {
+    "name": "mrgeneralgoo"
+  },
+  "homepage": "https://github.com/mrgeneralgoo/claude-hook-lark",
+  "repository": "https://github.com/mrgeneralgoo/claude-hook-lark",
+  "license": "MIT",
+  "keywords": [
+    "lark",
+    "feishu",
+    "飞书",
+    "notification",
+    "hooks",
+    "webhook"
+  ],
+  "skills": [
+    "./skills/lark-notify"
+  ],
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/lark_notify.py\" hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/lark_notify.py\" hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/lark_notify.py\" hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/lark_notify.py\" hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
