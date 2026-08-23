@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Claude Code → 飞书 / Lark 通知插件",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {

@@ -223,6 +223,8 @@ Python 3.9+（3.9.6 与 3.14.7 实测通过）。
 欢迎提 Issue 和 PR。改动请附带对应的回归用例 —— 这个项目的绝大多数分支都是某个具体失败场景的产物，
 `docs/DESIGN.md` 记录了它们各自的来由。
 
+版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## License
 
 MIT

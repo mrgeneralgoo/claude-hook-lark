@@ -2506,5 +2506,32 @@ class TestCardTitleUsesSessionName(unittest.TestCase):
         self.assertNotIn("会话 ID", json.dumps(card, ensure_ascii=False))
 
 
+class TestVersionMetadata(unittest.TestCase):
+    """版本号写在两个文件里，改一个忘一个是很容易犯的错。"""
+
+    def _repo(self):
+        return Path(__file__).resolve().parent.parent
+
+    def _load(self, rel):
+        return json.loads((self._repo() / rel).read_text(encoding="utf-8"))
+
+    def test_plugin_and_marketplace_versions_match(self):
+        plugin = self._load(".claude-plugin/plugin.json")["version"]
+        market = self._load(".claude-plugin/marketplace.json")["metadata"]["version"]
+        self.assertEqual(plugin, market,
+                         "plugin.json 与 marketplace.json 的版本号必须一致，"
+                         "否则 marketplace 判断更新时会看到矛盾的信息")
+
+    def test_version_is_semver(self):
+        version = self._load(".claude-plugin/plugin.json")["version"]
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$", "版本号应为 x.y.z")
+
+    def test_changelog_documents_current_version(self):
+        version = self._load(".claude-plugin/plugin.json")["version"]
+        changelog = (self._repo() / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("[%s]" % version, changelog,
+                      "发布新版本时 CHANGELOG 要同步记一笔")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
